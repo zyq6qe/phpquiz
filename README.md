@@ -1,2 +1,0 @@
-# phpquiz
-my capstone

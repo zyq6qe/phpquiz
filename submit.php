@@ -1,6 +1,8 @@
 <?php
 
 require "config.php";
+require "header.php";
+
 
 $user = $_SESSION['user'];
 $quiz = $_SESSION['quiz'];
@@ -8,33 +10,64 @@ $submission = array();
 
 $grade = 0;
 
-if (isset($_POST['submit'])) {
+$query = "";
+
+
+$query = "SELECT * FROM Accessed WHERE student_id = '$user' AND quiz_id = '$quiz'";
+$access = $db->query($query)->fetch_assoc();
+$now = new \DateTime();
+$deadline = new \DateTime($access['deadline']);
+
+
+//IF IT'S NOT PAST THE DEADLINE PUSH TO DB
+if ($deadline > $now) {
+    //reset users submission and grade
+    $query = "DELETE FROM Submission WHERE quiz_id = $quiz AND student_id ='$user'";
+    $db->query($query);
+
+    $query = "DELETE FROM Grade WHERE quiz_id = $quiz AND student_id ='$user'";
+    $db->query($query);
+
+    print_r($_POST);
+
+//re-enter everything in form so far
     foreach ($_POST as $key => $value) {
         if($key == "submit") {
-            break;
+            continue;
         }
-        $submission = explode(",", $value);
+
+        if (strpos($key, 'comment') !== false) {
+            continue;
+        }
 
         //prevent sql injection
         if (strpos($key, '\'') !== false) {
             header('Location: home.php');
         }
 
+        //get comment
+        $comment = $_POST['comment,' . $key];
+        if (empty($_POST['comment,' . $key])) {
+            $comment = NULL;
+        }
+
+
+        $query = "SELECT base_points FROM Question WHERE question_id = ".$key;
+        $result = $db->query($query)->fetch_assoc();
+        $base_points = $result['base_points'];
+
+        $max_points = 0;
+
         //get question type
         $query = "SELECT question_type FROM Question WHERE question_id = ".$key;
         $type = $db->query($query)->fetch_assoc();
 
         if($type['question_type'] == 'FR') { //free response
-            //get answer id
-            $query = "SELECT answer_id FROM Answer WHERE question_id = ".$key;
-            $result = $db->query($query)->fetch_assoc();
-            $answer_id = $result['answer_id'];
 
-            $query = "INSERT INTO Submission VALUES('$user', '$quiz', '$key', '$answer_id', '$value')";
+            $query = "INSERT INTO Submission VALUES('$user', '$quiz', '$key', NULL, '$value', '$comment')";
             $db->query($query); //insert into Submission
 
             //grade the response
-            $max_points = 0;
             //get and check regex
             $query = "SELECT * FROM Answer WHERE question_id = ".$key;
             $result = $db->query($query);
@@ -54,23 +87,51 @@ if (isset($_POST['submit'])) {
                 }
             }
 
-            $grade = $grade + $max_points;
+            $max_points = $max_points + $base_points;
+
+            $query = "INSERT INTO Grade VALUES('$user', '$quiz', '$key', '$max_points')";
+            $db->query($query);
 
         } else { //multiple choice
-            $query = "INSERT INTO Submission VALUES('$user', '$quiz', '$key', '$submission[0]', '$submission[1]')";
-            $db->query($query); //insert into Submission
 
-            //Grade the response
-            $query = "SELECT points FROM Answer WHERE answer_id = ".$submission[0];
-            $result = $db->query($query)->fetch_assoc();
-            $grade = $grade + $result['points'];
+            if ($type['question_type'] == 'MMC') {
+
+                for ($i = 0; $i < count($value); $i++) {
+                    $submission = explode(",", $value[$i]);
+                    $a_id = $submission[0];
+                    $text = $submission[1];
+                    $query = "INSERT INTO Submission VALUES('$user', '$quiz', '$key', '$a_id', '$text', '$comment')";
+                    $db->query($query); //insert into Submission
+
+                    //grade the response
+                    $query = "SELECT points FROM Answer WHERE answer_id = ".$a_id;
+                    $result = $db->query($query)->fetch_assoc();
+                    $max_points = $max_points + $result['points'];
+                }
+            } else {
+                $submission = explode(",", $value);
+                $a_id = $submission[0];
+                $text = $submission[1];
+                $query = "INSERT INTO Submission VALUES('$user', '$quiz', '$key', '$a_id', '$text', '$comment')";
+                $db->query($query); //insert into Submission
+
+                //grade the response
+                $query = "SELECT points FROM Answer WHERE answer_id = ".$a_id;
+                $result = $db->query($query)->fetch_assoc();
+                $max_points = $result['points'];
+            }
+
+            $max_points = $max_points + $base_points;
+
+            $query = "INSERT INTO Grade VALUES('$user', '$quiz', '$key', '$max_points')";
+            $db->query($query);
+
         }
     }
-
-    $query = "INSERT INTO Grade VALUES('$user', '$quiz', '$grade')";
-    $db->query($query);
 }
 
-unset($_SESSION['quiz']);
 
-header('Location: home.php');
+//$query = "INSERT INTO Grade VALUES('$user', '$quiz', '$grade')";
+//$db->query($query);
+
+//header('Location: home.php');
